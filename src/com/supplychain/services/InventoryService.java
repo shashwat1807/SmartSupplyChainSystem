@@ -1,58 +1,68 @@
 package com.supplychain.services;
 
-import java.util.Map;
-import java.util.HashMap;
+import com.supplychain.models.Product;
+import com.supplychain.models.WarehouseManager;
 
-public class InventoryService implements Trackable{
-  private Map<String, Integer> stockLevels;
-	 
-	// Overloaded constructor 1: Default
-	 public InventoryService() {
-		 this.stockLevels = new HashMap<>();
-	 }
-	 
-	 //Overloaded constructor 2 : provided with the map
-	 public InventoryService(Map<String, Integer> initialStock) {
-	        this.stockLevels = new HashMap<>(initialStock);
-	 }
-	 
-	 public void addStock(String productCode, int qty) {
-		stockLevels.put(productCode, stockLevels.getOrDefault(productCode, 0) + qty);
-		System.out.println("Added " + qty + " units of " + productCode);
-	}
-	
-	public void addStock(int[] qty, String... productCodes) {
-		if (qty.length != productCodes.length) {
-			throw new IllegalArgumentException("Quantities and product codes must be of the same length.");
-		}
-		
-		for (int i = 0; i < qty.length; i++) {
-			addStock(productCodes[i],qty[i]);
-		}
-	}
-	
-	public void removeStock(String productCode, Integer qty) {
-		int currentQty = stockLevels.getOrDefault(productCode, 0);
-		
-		if (qty > currentQty) {
-			throw new InsufficientStockException("Insufficient stock for " + productCode);
-		}
-		else {
-			stockLevels.put(productCode, currentQty - qty);
-			System.out.println("Removed " + qty + " units of " + productCode);
-		}
-	}
-	
-	//getter method for stockLevels
-	public Map<String, Integer> getStockLevels() {
-	    return this.stockLevels; 
-	}
-	
-	
-	
-	public static class InsufficientStockException extends Exception {
-        public InsufficientStockException(String message) {
-            super(message);
+import java.util.List;
+
+public class InventoryService extends Thread {
+    private final WarehouseManager warehouseManager;
+    private final int checkIntervalMillis = 5000; // check every 5 seconds
+    private volatile boolean running = true;
+
+    public InventoryService(WarehouseManager whm) {
+        this.warehouseManager = whm;
+    }
+
+    public void stopThread(){
+        this.running = false;
+        interrupt();  // Interrupt the thread if it's sleeping or waiting
+    }
+
+    @Override
+    public void run() {
+        System.out.println("[InventoryService] Started inventory monitoring service.");
+
+        // Loop to monitor inventory
+        while (this.running) {
+            try {
+                // Check if products list is null or empty
+                List<Product> products = warehouseManager.getProducts();
+                if (products == null || products.isEmpty()) {
+                    System.out.println("[InventoryService] No products to monitor. Waiting for products...");
+                    Thread.sleep(10000);  // Wait for 10 seconds before checking again
+                    continue;  // Continue the loop instead of returning
+                }
+
+                // Iterate through products and check stock levels
+                for (Product product : products) {
+                    String productCode = product.getCode();
+                    Integer currentQty = warehouseManager.quantityMap.getOrDefault(productCode, 0);
+
+                    // Log product check and stock levels
+                    System.out.println("[InventoryService] Checking Product: " + product.getName() +
+                            " | Code: " + productCode + " | Current Stock: " + currentQty);
+
+                    if (currentQty <= warehouseManager.getMinOrderQty()) {
+                        // Log reordering action
+                        System.out.println("[InventoryService] Stock for product " + product.getName() + " (" + productCode +
+                                ") is below minimum threshold (" + warehouseManager.getMinOrderQty() + "). Reordering...");
+
+                        // Place an order for the product
+                        warehouseManager.buyStock(product, warehouseManager.getMinOrderQty());
+                    }
+                }
+
+                // Sleep for the defined interval before re-checking
+                Thread.sleep(checkIntervalMillis);  // 5 seconds
+
+            } catch (InterruptedException e) {
+                System.err.println("[InventoryService] Inventory monitoring interrupted.");
+                break;  // Exit the loop if interrupted
+            } catch (Exception e) {
+                System.err.println("[InventoryService] Unexpected error: " + e.getMessage());
+            }
         }
+        System.out.println("[InventoryService] Inventory monitoring service stopped.");
     }
 }
